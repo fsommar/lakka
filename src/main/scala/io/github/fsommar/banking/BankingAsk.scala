@@ -11,10 +11,9 @@ import akka.actor.{ActorSystem, Props}
 import akka.event.Logging
 import akka.util.Timeout
 
-import lacasa.{Box, CanAccess, Safe, Utils}
+import lacasa.akka.actor.{Actor, ActorRef, SafeReceive}
+import lacasa.{Box, CanAccess, Safe}
 import Box._
-
-import lacasa.akka.{SafeActor, SafeActorRef}
 
 
 object BankingAsk {
@@ -22,11 +21,10 @@ object BankingAsk {
   def main(args: Array[String]) {
     val system = ActorSystem("BankingAsk")
 
-    val master = SafeActorRef[Message](system.actorOf(Props(
+    val master: ActorRef = system.actorOf(Props(
       new Teller(
         /*BankingConfig.A*/ 1000,
-        /*BankingConfig.N*/ 50000))))
-    SafeActorRef.init(master)
+        /*BankingConfig.N*/ 50000)))
     Thread.sleep(6000)
     system.terminate()
   }
@@ -42,47 +40,42 @@ object BankingAsk {
   sealed trait Message
   case class ReplyMsg() extends Message
   case class StopMsg() extends Message
-  case class DebitMsg(sender: SafeActorRef[Message], amount: Double) extends Message
-  case class CreditMsg(sender: SafeActorRef[Message], amount: Double, recipient: SafeActorRef[Message]) extends Message
+  case class DebitMsg(sender: ActorRef, amount: Double) extends Message
+  case class CreditMsg(sender: ActorRef, amount: Double, recipient: ActorRef) extends Message
 
-  protected class Teller(numAccounts: Int, numBankings: Int) extends SafeActor[Message] {
+  protected class Teller(numAccounts: Int, numBankings: Int) extends Actor with SafeReceive {
     val log = Logging(context.system, this)
 
-    private val accounts = Array.tabulate[SafeActorRef[Message]](numAccounts)((i) => {
-      SafeActorRef[Message](context.system.actorOf(Props(
+    private val accounts = Array.tabulate[ActorRef](numAccounts)((i) => {
+        context.system.actorOf(Props(
         new Account(
           i,
-          /*BankingConfig.INITIAL_BALANCE*/ Double.MaxValue / (1000 * 50000)))))
+          /*BankingConfig.INITIAL_BALANCE*/ Double.MaxValue / (1000 * 50000))))
     })
     private var numCompletedBankings = 0
     private val randomGen = new Random(123456)
 
 
-    override def init() = {
-      Utils.loop((1 to numBankings).toIterator) { _ =>
-        generateWork()
-      }
+    log.info("init")
+    for (_ <- 1 to numBankings) {
+      generateWork()
     }
 
-    override def receive(box: Box[Message])(implicit acc: CanAccess { type C = box.C }): Unit = {
-      val msg: Message = box.extract(identity)
-      msg match {
-        case sm: ReplyMsg =>
-          numCompletedBankings += 1
-          if (numCompletedBankings == numBankings) {
-            Utils.loopAndThen(accounts.toIterator)({ account =>
-              account ! new StopMsg()
-            }) { () =>
-              log.info("stopping")
-              context.stop(self)
-            }
+    override def safeReceive: Receive = {
+      case sm: ReplyMsg =>
+        numCompletedBankings += 1
+        if (numCompletedBankings == numBankings) {
+          for (account <- accounts) {
+            account ! new StopMsg()
           }
+          log.info("stopping")
+          context.stop(self)
+        }
 
-        case _ => ???
-      }
+      case _ => ???
     }
 
-    def generateWork(): Nothing = {
+    def generateWork(): Unit = {
       // src is lower than dest id to ensure there is never a deadlock
       val srcAccountId = randomGen.nextInt((accounts.length / 10) * 8)
       var loopId = randomGen.nextInt(accounts.length - srcAccountId)
@@ -99,35 +92,24 @@ object BankingAsk {
     }
   }
 
-  protected class Account(id: Int, var balance: Double) extends SafeActor[Message] {
+  protected class Account(id: Int, var balance: Double) extends Actor with SafeReceive {
 
-    // These implicits are required for the `ask` pattern to work.
-    implicit val ec: ExecutionContext = context.dispatcher
-    implicit val timeout = Timeout(6 seconds)
+    override def safeReceive: Receive = {
+      case dm: DebitMsg =>
+        balance += dm.amount
+        safeSender ! new ReplyMsg()
 
-    override def receive(box: Box[Message])(implicit acc: CanAccess { type C = box.C }): Unit = {
-      val msg: Message = box.extract(identity)
-      msg match {
-        case dm: DebitMsg =>
-          balance += dm.amount
-          sender() ! new ReplyMsg()
+      case cm: CreditMsg =>
+        balance -= cm.amount
+        implicit val timeout = Timeout(6 seconds)
+        val future = cm.recipient ? new DebitMsg(self, cm.amount)
+        Await.result(future, Duration.Inf)
+        safeSender ! new ReplyMsg()
 
-        case cm: CreditMsg =>
-          balance -= cm.amount
-          mkBoxOf(new DebitMsg(self, cm.amount)) { packed =>
-            implicit val acc = packed.access
-            cm.recipient.ask(packed.box) { future =>
-              Await.result(future, Duration.Inf)
-              // Once the transaction is complete, we alert the teller.
-              cm.sender ! new ReplyMsg()
-            }
-          }
+      case _: StopMsg =>
+        context.stop(self)
 
-        case _: StopMsg =>
-          context.stop(self)
-
-        case _ => ???
-      }
+      case _ => ???
     }
   }
 

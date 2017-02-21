@@ -6,12 +6,9 @@ package io.github.fsommar.threadring
 import akka.actor.{ActorSystem, Props}
 import akka.event.Logging
 
-import scala.spores._
-
+import lacasa.akka.actor.{Actor, ActorRef, SafeReceive}
 import lacasa.{Box, CanAccess, Safe, Utils}
 import Box._
-
-import lacasa.akka.{SafeActor, SafeActorRef}
 
 
 object Message {
@@ -39,100 +36,45 @@ class ExitMessage(val exitsLeft: Int) extends Message {
     new ExitMessage(exitsLeft - 1)
 }
 
-class DataMessage(val data: AnyRef) extends Message
-
-
-object Action {
-  implicit val actionIsSafe = new Safe[Action] {}
-}
-sealed abstract class Action
-final case class SendPingMessage(pm: PingMessage) extends Action
-final case class SendExitMessage(em: ExitMessage) extends Action
-final case class SendLastExitMessage(em: ExitMessage) extends Action
-final case class StopSelf() extends Action
-final case class SetNextActor(nextActor: SafeActorRef[Message]) extends Action
+class DataMessage(val data: ActorRef) extends Message
 
 /* Steps when converting an existing Akka program to LaCasa:
  *
- * 1. Use trait `SafeActor` instead of `Actor`; `SafeActor` provides a `receive`
+ * 1. Use trait `Actor` instead of `Actor`; `Actor` provides a `receive`
  *    method with a different signature.
  * 2. Send and receive boxes as messages.
  *    This requires changes such as opening each received box.
  * 3. Creating boxes for messages: here, sent message classes may need to be
  *    changed to provide a no-arg constructor.
  */
-private class ThreadRingActor(id: Int, numActorsInRing: Int) extends SafeActor[Message] {
+private class ThreadRingActor(id: Int, numActorsInRing: Int) extends Actor with SafeReceive {
   val log = Logging(context.system, this)
 
-  private var nextActor: SafeActorRef[Message] = _
+  private var nextActor: ActorRef = _
 
-  def receive(msg: Box[Message])(implicit acc: CanAccess { type C = msg.C }): Unit = {
-    val action = msg.extract[Action](spore { (m: Message) =>
-      m match {
-        case pm: PingMessage =>
-          log.info(s"received PingMessage: pings left == ${pm.pingsLeft}")
-          if (pm.hasNext) SendPingMessage(pm.next())
-          else SendExitMessage(new ExitMessage(numActorsInRing))
-
-        case em: ExitMessage =>
-          if (em.hasNext) SendLastExitMessage(em.next())
-          else StopSelf()
-
-        case dm: DataMessage =>
-          log.info(s"received DataMessage: ${dm.data}")
-          SetNextActor(dm.data.asInstanceOf[SafeActorRef[Message]])
+  def safeReceive: Receive = {
+    case pm: PingMessage =>
+      log.info(s"received PingMessage: pings left == ${pm.pingsLeft}")
+      if (pm.hasNext) {
+        nextActor ! pm.next()
+      } else {
+        nextActor ! new ExitMessage(numActorsInRing)
       }
-    })
 
-    // carry out `action`
-    action match {
-      case SendPingMessage(pm) =>
-        nextActor ! pm
-
-      case SendExitMessage(em) =>
-        nextActor ! em
-
-      case SendLastExitMessage(em) =>
-        mkBoxOf(em) { packed =>
-          implicit val access = packed.access
-          val box: packed.box.type = packed.box
-          nextActor.sendAndThen(box) { () =>
-            log.info(s"stopping ${self.path}")
-            context.stop(self)
-          }
-        }
-
-      case StopSelf() =>
+    case em: ExitMessage =>
+      if (em.hasNext) {
+        nextActor ! em.next()
         log.info(s"stopping ${self.path}")
         context.stop(self)
+      } else {
+        log.info(s"stopping ${self.path}")
+        context.stop(self)
+      }
 
-      case SetNextActor(na) =>
-        nextActor = na
-    }
+    case dm: DataMessage =>
+      log.info(s"received DataMessage: ${dm.data}")
+      nextActor = dm.data
   }
-
-}
-
-private class PingStartActor(numActorsInRing: Int) extends SafeActor[Any] {
-
-  override def init() = {
-    import context._
-
-    val ringActors = Array.tabulate[SafeActorRef[Message]](numActorsInRing)(i => {
-      SafeActorRef[Message](system.actorOf(Props(new ThreadRingActor(i, numActorsInRing))))
-    })
-
-    val iter = ringActors.view.zipWithIndex.toIterator
-    Utils.loopAndThen(iter)({ elem =>
-      val (loopActor, i) = elem
-      val nextActor = ringActors((i + 1) % numActorsInRing)
-      loopActor ! new DataMessage(nextActor)
-    })({ () =>
-      ringActors(0) ! new PingMessage(10)
-    })
-  }
-
-  override def receive(box: Box[Any])(implicit acc: CanAccess { type C = box.C }) = ???
 
 }
 
@@ -141,10 +83,17 @@ object ThreadRing {
   def main(args: Array[String]): Unit = {
     val system = ActorSystem("ThreadRing")
 
-    val pingStartActor = SafeActorRef[Any](system.actorOf(Props(
-      new PingStartActor(/* ThreadRingConfig.N */ 2))))
+    val numActorsInRing = /* ThreadRingConfig.N */ 2
+    val ringActors = Array.tabulate[ActorRef](numActorsInRing)(i => {
+      system.actorOf(Props(new ThreadRingActor(i, numActorsInRing)))
+    })
 
-    SafeActorRef.init(pingStartActor)
+    for ((loopActor, i) <- ringActors.view.zipWithIndex) {
+      val nextActor = ringActors((i + 1) % numActorsInRing)
+      loopActor ! new DataMessage(nextActor)
+    }
+    ringActors(0) ! new PingMessage(10)
+
     Thread.sleep(2000)
     system.terminate()
   }
