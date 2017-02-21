@@ -3,19 +3,9 @@
  */
 package io.github.fsommar.threadring
 
-import akka.actor.{ActorSystem, Props}
+import akka.actor.{Actor, ActorRef, ActorSystem, Props}
 import akka.event.Logging
 
-import lacasa.akka.actor.{Actor, ActorRef}
-import lacasa.Safe
-
-
-object Message {
-  implicit val messageIsSafe = new Safe[Message] {}
-  implicit val pingMessageIsSafe = new Safe[PingMessage] {}
-  implicit val exitMessageIsSafe = new Safe[ExitMessage] {}
-  implicit val dataMessageIsSafe = new Safe[DataMessage] {}
-}
 
 sealed trait Message
 

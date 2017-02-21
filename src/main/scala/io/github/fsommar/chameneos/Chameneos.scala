@@ -3,11 +3,8 @@
  */
 package io.github.fsommar.chameneos
 
-import akka.actor.{ActorSystem, Props}
+import akka.actor.{Actor, ActorRef, ActorSystem, Props}
 import akka.event.Logging
-
-import lacasa.akka.actor.{Actor, ActorRef}
-import lacasa.Safe
 
 
 object Chameneos {
@@ -21,14 +18,6 @@ object Chameneos {
         /* ChameneosConfig.numChameneos */ 10)))
     Thread.sleep(2000)
     system.terminate()
-  }
-
-  object Message {
-    implicit val MessageIsSafe = new Safe[Message] {}
-    implicit val MeetMsgIsSafe = new Safe[MeetMsg] {}
-    implicit val ChangeMsgIsSafe = new Safe[ChangeMsg] {}
-    implicit val MeetingCountMsgIsSafe = new Safe[MeetingCountMsg] {}
-    implicit val ExitMsgIsSafe = new Safe[ExitMsg] {}
   }
 
   sealed trait Message

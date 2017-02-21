@@ -7,12 +7,10 @@ import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.concurrent.duration._
 import scala.util.Random
 
-import akka.actor.{ActorSystem, Props}
+import akka.actor.{Actor, ActorRef, ActorSystem, Props}
 import akka.event.Logging
+import akka.pattern.ask
 import akka.util.Timeout
-
-import lacasa.akka.actor.{Actor, ActorRef}
-import lacasa.Safe
 
 
 object BankingAsk {
@@ -26,14 +24,6 @@ object BankingAsk {
         /*BankingConfig.N*/ 50000)))
     Thread.sleep(6000)
     system.terminate()
-  }
-
-  object Message {
-    implicit val MessageIsSafe = new Safe[Message] {}
-    implicit val ReplyMsgIsSafe = new Safe[ReplyMsg] {}
-    implicit val StopMsgIsSafe = new Safe[StopMsg] {}
-    implicit val DebitMsgIsSafe = new Safe[DebitMsg] {}
-    implicit val CreditMsgIsSafe = new Safe[CreditMsg] {}
   }
 
   sealed trait Message
@@ -96,14 +86,14 @@ object BankingAsk {
     override def receive: Receive = {
       case dm: DebitMsg =>
         balance += dm.amount
-        ctx.sender ! new ReplyMsg()
+        sender ! new ReplyMsg()
 
       case cm: CreditMsg =>
         balance -= cm.amount
         implicit val timeout = Timeout(6 seconds)
         val future = cm.recipient ? new DebitMsg(self, cm.amount)
         Await.result(future, Duration.Inf)
-        ctx.sender ! new ReplyMsg()
+        sender ! new ReplyMsg()
 
       case _: StopMsg =>
         context.stop(self)
