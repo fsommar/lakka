@@ -6,9 +6,8 @@ package io.github.fsommar.threadring
 import akka.actor.{ActorSystem, Props}
 import akka.event.Logging
 
-import lacasa.akka.actor.{Actor, ActorRef, SafeReceive}
-import lacasa.{Box, CanAccess, Safe, Utils}
-import Box._
+import lacasa.akka.actor.{Actor, ActorRef}
+import lacasa.Safe
 
 
 object Message {
@@ -47,12 +46,12 @@ class DataMessage(val data: ActorRef) extends Message
  * 3. Creating boxes for messages: here, sent message classes may need to be
  *    changed to provide a no-arg constructor.
  */
-private class ThreadRingActor(id: Int, numActorsInRing: Int) extends Actor with SafeReceive {
+private class ThreadRingActor(id: Int, numActorsInRing: Int) extends Actor {
   val log = Logging(context.system, this)
 
   private var nextActor: ActorRef = _
 
-  def safeReceive: Receive = {
+  def receive: Receive = {
     case pm: PingMessage =>
       log.info(s"received PingMessage: pings left == ${pm.pingsLeft}")
       if (pm.hasNext) {

@@ -11,9 +11,8 @@ import akka.actor.{ActorSystem, Props}
 import akka.event.Logging
 import akka.util.Timeout
 
-import lacasa.akka.actor.{Actor, ActorRef, SafeReceive}
-import lacasa.{Box, CanAccess, Safe}
-import Box._
+import lacasa.akka.actor.{Actor, ActorRef}
+import lacasa.Safe
 
 
 object BankingAsk {
@@ -43,7 +42,7 @@ object BankingAsk {
   case class DebitMsg(sender: ActorRef, amount: Double) extends Message
   case class CreditMsg(sender: ActorRef, amount: Double, recipient: ActorRef) extends Message
 
-  protected class Teller(numAccounts: Int, numBankings: Int) extends Actor with SafeReceive {
+  protected class Teller(numAccounts: Int, numBankings: Int) extends Actor {
     val log = Logging(context.system, this)
 
     private val accounts = Array.tabulate[ActorRef](numAccounts)((i) => {
@@ -61,7 +60,7 @@ object BankingAsk {
       generateWork()
     }
 
-    override def safeReceive: Receive = {
+    override def receive: Receive = {
       case sm: ReplyMsg =>
         numCompletedBankings += 1
         if (numCompletedBankings == numBankings) {
@@ -92,19 +91,19 @@ object BankingAsk {
     }
   }
 
-  protected class Account(id: Int, var balance: Double) extends Actor with SafeReceive {
+  protected class Account(id: Int, var balance: Double) extends Actor {
 
-    override def safeReceive: Receive = {
+    override def receive: Receive = {
       case dm: DebitMsg =>
         balance += dm.amount
-        safeSender ! new ReplyMsg()
+        ctx.sender ! new ReplyMsg()
 
       case cm: CreditMsg =>
         balance -= cm.amount
         implicit val timeout = Timeout(6 seconds)
         val future = cm.recipient ? new DebitMsg(self, cm.amount)
         Await.result(future, Duration.Inf)
-        safeSender ! new ReplyMsg()
+        ctx.sender ! new ReplyMsg()
 
       case _: StopMsg =>
         context.stop(self)

@@ -6,9 +6,8 @@ package io.github.fsommar.chameneos
 import akka.actor.{ActorSystem, Props}
 import akka.event.Logging
 
-import lacasa.akka.actor.{Actor, ActorRef, SafeReceive}
-import lacasa.{Box, CanAccess, Safe}
-import Box._
+import lacasa.akka.actor.{Actor, ActorRef}
+import lacasa.Safe
 
 
 object Chameneos {
@@ -38,7 +37,7 @@ object Chameneos {
   case class MeetingCountMsg(count: Int, sender: ActorRef) extends Message
   case class ExitMsg(sender: ActorRef) extends Message
 
-  private class ChameneosMallActor(numMeetings: Int, numChameneos: Int) extends Actor with SafeReceive {
+  private class ChameneosMallActor(numMeetings: Int, numChameneos: Int) extends Actor {
     val log = Logging(context.system, this)
 
     var numMeetingsLeft: Int = numMeetings
@@ -53,7 +52,7 @@ object Chameneos {
         new ChameneoActor(self, i, color)))
     }
 
-    override def safeReceive: Receive = {
+    override def receive: Receive = {
       case message: MeetingCountMsg =>
         numFaded += 1
         sumMeetings += message.count
@@ -78,13 +77,13 @@ object Chameneos {
 
   }
 
-  private class ChameneoActor(mall: ActorRef, id: Int, var color: Color) extends Actor with SafeReceive {
+  private class ChameneoActor(mall: ActorRef, id: Int, var color: Color) extends Actor {
     val log = Logging(context.system, this)
     private var meetings: Int = 0
 
     mall ! new MeetMsg(color, self)
 
-    override def safeReceive: Receive = {
+    override def receive: Receive = {
       case message: MeetMsg =>
         color = color.complement(message.color)
         meetings += 1
